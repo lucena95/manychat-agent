@@ -1,10 +1,10 @@
 {
   "name": "manychat-agent",
   "version": "1.0.0",
-  "description": "Agente para crear flujos ManyChat desde WhatsApp via GHL",
-  "main": "server.js",
+  "description": "Agente ManyChat + Bot Telegram para LeadsMastery",
+  "main": "telegram-bot.js",
   "scripts": {
-    "start": "node server.js",
+    "start": "node telegram-bot.js",
     "postinstall": "npx playwright install chromium --with-deps"
   },
   "dependencies": {
