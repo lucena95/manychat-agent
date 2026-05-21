@@ -51,6 +51,9 @@ async function createManyChatFlow(keyword) {
     await page.waitForTimeout(2000);
     console.log(`[ManyChat] ManyChat abierto: ${page.url()}`);
 
+    // Cerrar banner de cookies GDPR (bloquea todos los clics si aparece)
+    await dismissCookieBanner(page);
+
     // Abrir el flujo base para duplicarlo
     const BASE_FLOW = 'content20260521152458_230387';
     await page.goto(`https://app.manychat.com/${ACCOUNT_ID}/cms/easy-builder/${BASE_FLOW}`, {
@@ -58,6 +61,7 @@ async function createManyChatFlow(keyword) {
       timeout: 60000
     });
     await page.waitForTimeout(3000);
+    await dismissCookieBanner(page); // Cerrar banner también aquí
 
     // Clicar Editar
     const editBtn = page.getByText('Editar').first();
@@ -121,6 +125,54 @@ async function createManyChatFlow(keyword) {
   } finally {
     await context.close();
     await browser.close();
+  }
+}
+
+async function dismissCookieBanner(page) {
+  try {
+    // Esperar si el banner está cargando
+    await page.waitForTimeout(1000);
+
+    // Intentar cerrar el banner de Usercentrics
+    const dismissed = await page.evaluate(() => {
+      // Método 1: eliminar el elemento del DOM directamente
+      const banner = document.getElementById('usercentrics-cmp-ui');
+      if (banner) {
+        banner.remove();
+        return 'removed banner';
+      }
+
+      // Método 2: buscar botón de aceptar
+      const acceptBtns = Array.from(document.querySelectorAll('button')).filter(b =>
+        b.textContent?.toLowerCase().includes('accept') ||
+        b.textContent?.toLowerCase().includes('aceptar') ||
+        b.textContent?.toLowerCase().includes('agree') ||
+        b.textContent?.toLowerCase().includes('rechazar') ||
+        b.textContent?.toLowerCase().includes('reject')
+      );
+      if (acceptBtns.length > 0) {
+        acceptBtns[0].click();
+        return 'clicked accept button';
+      }
+
+      return 'no banner found';
+    });
+
+    console.log(`[ManyChat] Cookie banner: ${dismissed}`);
+
+    // También eliminar via shadow DOM si existe
+    await page.evaluate(() => {
+      const aside = document.querySelector('aside[id*="usercentrics"]');
+      if (aside) aside.style.display = 'none';
+
+      // Restaurar el scroll y pointer events del body
+      document.body.style.pointerEvents = 'auto';
+      document.body.style.overflow = 'auto';
+    });
+
+    await page.waitForTimeout(500);
+  } catch (e) {
+    console.log('[ManyChat] Cookie banner check skipped:', e.message);
   }
 }
 
