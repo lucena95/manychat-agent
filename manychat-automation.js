@@ -104,8 +104,16 @@ async function createManyChatFlow(keyword) {
     // Actualizar sesión guardada
     await context.storageState({ path: SESSION_FILE });
 
+    // Capturar screenshot como prueba
+    const screenshot = await page.screenshot({ type: 'jpeg', quality: 70 });
+
     console.log(`[ManyChat] ✅ Flujo REEL_${keyword} listo`);
-    return { success: true, keyword, url: `https://wa.me/${GHL_PHONE}?text=REEL_${keyword}` };
+    return {
+      success: true,
+      keyword,
+      url: `https://wa.me/${GHL_PHONE}?text=REEL_${keyword}`,
+      screenshot  // Buffer con la imagen
+    };
 
   } catch (err) {
     console.error(`[ManyChat] Error:`, err.message);

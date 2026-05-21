@@ -82,15 +82,38 @@ function extractKeyword(text) {
 }
 
 // ─── Create ManyChat flow ─────────────────────────────────────────────────────
+async function sendPhoto(chatId, imageBuffer, caption) {
+  const form = new FormData();
+  form.append('chat_id', String(chatId));
+  form.append('caption', caption);
+  form.append('parse_mode', 'Markdown');
+  form.append('photo', new Blob([imageBuffer], { type: 'image/jpeg' }), 'screenshot.jpg');
+
+  await fetch(`https://api.telegram.org/bot${TOKEN}/sendPhoto`, {
+    method: 'POST',
+    body: form
+  });
+}
+
 async function createReel(chatId, keyword) {
   await tg('sendMessage', { chat_id: chatId, text: `⏳ Abriendo ManyChat en la nube para *REEL\\_${keyword}*...`, parse_mode: 'Markdown' });
   try {
     const result = await createManyChatFlow(keyword);
-    await tg('sendMessage', {
-      chat_id: chatId,
-      text: `✅ *REEL\\_${keyword}* listo en ManyChat\n\nURL para tu Reel:\n\`https://wa.me/${GHL_PHONE}?text=REEL\\_${keyword}\`\n\n_En tu CTA pon: "Comenta ${keyword} para recibir el enlace"_`,
-      parse_mode: 'Markdown'
-    });
+
+    // Enviar screenshot como prueba
+    if (result.screenshot) {
+      await sendPhoto(
+        chatId,
+        result.screenshot,
+        `✅ *REEL\\_${keyword}* creado en ManyChat\n\nURL: \`https://wa.me/${GHL_PHONE}?text=REEL\\_${keyword}\``
+      );
+    } else {
+      await tg('sendMessage', {
+        chat_id: chatId,
+        text: `✅ *REEL\\_${keyword}* listo\n\nURL: \`https://wa.me/${GHL_PHONE}?text=REEL\\_${keyword}\``,
+        parse_mode: 'Markdown'
+      });
+    }
   } catch (e) {
     await tg('sendMessage', { chat_id: chatId, text: `❌ Error: ${e.message}` });
   }
