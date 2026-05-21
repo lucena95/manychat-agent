@@ -9,6 +9,50 @@ const SESSION_FILE = process.env.SESSION_FILE || path.join(__dirname, 'session.j
 const ACCOUNT_ID = 'fb105106091491726';
 const GHL_PHONE = '34663117022';
 
+// Borra el flujo más reciente (el que acabamos de modificar la vez anterior)
+async function deleteLatestFlow(page) {
+  try {
+    await page.goto(`https://app.manychat.com/${ACCOUNT_ID}/cms?path=/&field=modified&order=desc`, {
+      waitUntil: 'domcontentloaded', timeout: 60000
+    });
+    await page.waitForTimeout(2000);
+    await dismissCookieBanner(page);
+
+    // Buscar el botón de menú (3 puntos) del primer flujo y borrarlo
+    const deleted = await page.evaluate(() => {
+      // Encontrar el primer flujo de la lista y hacer clic en su menú
+      const cards = document.querySelectorAll('[class*="_card_"]');
+      if (cards.length === 0) return 'no cards';
+
+      // Buscar el botón de opciones en el primer card
+      const firstCard = cards[0];
+      const menuBtn = firstCard.querySelector('[class*="interactable"], [class*="anchor"]');
+      if (menuBtn) {
+        menuBtn.click();
+        return 'menu clicked';
+      }
+      return 'no menu button';
+    });
+
+    await page.waitForTimeout(1000);
+
+    // Buscar y clicar "Eliminar" en el menú desplegable
+    const deleteBtn = page.getByText('Eliminar').first();
+    if (await deleteBtn.isVisible({ timeout: 3000 }).catch(() => false)) {
+      await deleteBtn.click();
+      await page.waitForTimeout(1000);
+      // Confirmar borrado si aparece diálogo
+      const confirmBtn = page.getByText('Eliminar').nth(1);
+      if (await confirmBtn.isVisible({ timeout: 2000 }).catch(() => false)) {
+        await confirmBtn.click();
+      }
+      console.log('[ManyChat] Flujo anterior borrado ✅');
+    }
+  } catch (e) {
+    console.log('[ManyChat] No se pudo borrar flujo anterior:', e.message);
+  }
+}
+
 async function createManyChatFlow(keyword) {
   console.log(`[ManyChat] Conectando a Browserless para keyword: ${keyword}`);
 
@@ -54,7 +98,10 @@ async function createManyChatFlow(keyword) {
     // Cerrar banner de cookies GDPR (bloquea todos los clics si aparece)
     await dismissCookieBanner(page);
 
-    // Abrir el flujo base para duplicarlo
+    // Borrar el flujo del reel anterior (siempre solo hay uno activo)
+    // await deleteLatestFlow(page); // Desactivado por ahora — activar si se quiere borrar el anterior
+
+    // Abrir el flujo base para modificarlo
     const BASE_FLOW = 'content20260521152458_230387';
     await page.goto(`https://app.manychat.com/${ACCOUNT_ID}/cms/easy-builder/${BASE_FLOW}`, {
       waitUntil: 'domcontentloaded',
