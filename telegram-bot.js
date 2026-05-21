@@ -1,5 +1,4 @@
 const express = require('express');
-const https = require('https');
 
 const TELEGRAM_TOKEN = process.env.TELEGRAM_TOKEN;
 const WEBHOOK_SECRET = process.env.WEBHOOK_SECRET || 'leadsmastery2024';
@@ -11,16 +10,19 @@ const app = express();
 app.use(express.json());
 
 // ─── Telegram API helper ─────────────────────────────────────────────────────
-function sendTelegram(chatId, text) {
-  const body = JSON.stringify({ chat_id: chatId, text, parse_mode: 'Markdown' });
-  const req = https.request({
-    hostname: 'api.telegram.org',
-    path: `/bot${TELEGRAM_TOKEN}/sendMessage`,
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) }
-  });
-  req.write(body);
-  req.end();
+async function sendTelegram(chatId, text) {
+  try {
+    const res = await fetch(`https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ chat_id: chatId, text, parse_mode: 'Markdown' })
+    });
+    const data = await res.json();
+    if (!data.ok) console.error('Telegram send error:', data.description);
+    return data;
+  } catch (e) {
+    console.error('sendTelegram error:', e.message);
+  }
 }
 
 // ─── Call Railway ManyChat agent ─────────────────────────────────────────────
