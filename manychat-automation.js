@@ -38,9 +38,10 @@ async function createManyChatFlow(keyword) {
     // Abrir ManyChat
     console.log(`[ManyChat] Abriendo ManyChat...`);
     await page.goto(`https://app.manychat.com/${ACCOUNT_ID}/cms?path=/&field=modified&order=desc`, {
-      waitUntil: 'networkidle',
-      timeout: 30000
+      waitUntil: 'domcontentloaded',
+      timeout: 60000
     });
+    await page.waitForTimeout(3000);
 
     // Verificar sesión activa
     if (page.url().includes('login') || page.url().includes('signin')) {
@@ -53,8 +54,8 @@ async function createManyChatFlow(keyword) {
     // Abrir el flujo base para duplicarlo
     const BASE_FLOW = 'content20260521152458_230387';
     await page.goto(`https://app.manychat.com/${ACCOUNT_ID}/cms/easy-builder/${BASE_FLOW}`, {
-      waitUntil: 'networkidle',
-      timeout: 30000
+      waitUntil: 'domcontentloaded',
+      timeout: 60000
     });
     await page.waitForTimeout(3000);
 
