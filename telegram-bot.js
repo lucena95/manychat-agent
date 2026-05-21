@@ -1,4 +1,5 @@
 const express = require('express');
+const { createManyChatFlow } = require('./manychat-automation');
 
 const TOKEN = process.env.TELEGRAM_TOKEN;
 const WEBHOOK_SECRET = process.env.WEBHOOK_SECRET || 'leadsmastery2024';
@@ -82,16 +83,12 @@ function extractKeyword(text) {
 
 // ─── Create ManyChat flow ─────────────────────────────────────────────────────
 async function createReel(chatId, keyword) {
-  await tg('sendMessage', { chat_id: chatId, text: `⏳ Creando flujo *REEL\\_${keyword}*...`, parse_mode: 'Markdown' });
+  await tg('sendMessage', { chat_id: chatId, text: `⏳ Abriendo ManyChat en la nube para *REEL\\_${keyword}*...`, parse_mode: 'Markdown' });
   try {
-    await fetch('https://manychat-agent-production.up.railway.app/webhook/nuevo-reel', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ secret: WEBHOOK_SECRET, keyword })
-    });
+    const result = await createManyChatFlow(keyword);
     await tg('sendMessage', {
       chat_id: chatId,
-      text: `✅ *REEL\\_${keyword}* creado en ManyChat\n\nURL para tu reel:\n\`https://wa.me/${GHL_PHONE}?text=REEL\\_${keyword}\``,
+      text: `✅ *REEL\\_${keyword}* listo en ManyChat\n\nURL para tu Reel:\n\`https://wa.me/${GHL_PHONE}?text=REEL\\_${keyword}\`\n\n_En tu CTA pon: "Comenta ${keyword} para recibir el enlace"_`,
       parse_mode: 'Markdown'
     });
   } catch (e) {
