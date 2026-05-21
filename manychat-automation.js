@@ -117,28 +117,40 @@ async function createManyChatFlow(keyword) {
       await page.waitForTimeout(2000);
     }
 
-    // Cambiar keyword de "IA" a la nueva
+    // Cambiar keyword — usar type() para que React detecte los cambios
     const kwInput = page.locator(`input[name*="include_keywords_input"]`).first();
-    if (await kwInput.isVisible({ timeout: 5000 }).catch(() => false)) {
-      await kwInput.triple_click();
-      await kwInput.fill(keyword);
+    const kwVisible = await kwInput.isVisible({ timeout: 8000 }).catch(() => false);
+
+    if (kwVisible) {
+      await kwInput.click({ clickCount: 3 }); // seleccionar todo
+      await page.keyboard.press('Control+A');
+      await page.keyboard.press('Backspace');
+      await kwInput.type(keyword, { delay: 50 }); // type carácter a carácter para React
+      await page.keyboard.press('Enter');
       console.log(`[ManyChat] Keyword cambiada a: ${keyword}`);
     } else {
-      // Intentar por placeholder
+      // Fallback: buscar por placeholder
       const inputs = await page.$$('input[placeholder*="Escribe una palabra"]');
       if (inputs.length > 0) {
-        await inputs[0].triple_click();
-        await inputs[0].fill(keyword);
+        await inputs[0].click({ clickCount: 3 });
+        await page.keyboard.press('Control+A');
+        await page.keyboard.press('Backspace');
+        await page.keyboard.type(keyword, { delay: 50 });
+        await page.keyboard.press('Enter');
+        console.log(`[ManyChat] Keyword cambiada (fallback): ${keyword}`);
       }
     }
 
-    // Buscar y cambiar la URL del botón wa.me
+    // Buscar y cambiar la URL del botón wa.me — también usar type() para React
     const allInputs = await page.$$('input, textarea');
     for (const inp of allInputs) {
       const val = await inp.inputValue().catch(() => '');
       if (val.includes('wa.me')) {
-        await inp.triple_click();
-        await inp.fill(`https://wa.me/${GHL_PHONE}?text=REEL_${keyword}`);
+        await inp.click({ clickCount: 3 });
+        await page.keyboard.press('Control+A');
+        await page.keyboard.press('Backspace');
+        await inp.type(`https://wa.me/${GHL_PHONE}?text=REEL_${keyword}`, { delay: 30 });
+        await page.keyboard.press('Enter');
         console.log(`[ManyChat] URL actualizada: wa.me/?text=REEL_${keyword}`);
         break;
       }
