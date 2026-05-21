@@ -1,5 +1,4 @@
 const express = require('express');
-const { FormData, File } = require('node-fetch') || {};
 
 const TOKEN = process.env.TELEGRAM_TOKEN;
 const WEBHOOK_SECRET = process.env.WEBHOOK_SECRET || 'leadsmastery2024';
@@ -48,7 +47,7 @@ async function transcribeAudio(fileId) {
   const audioBuffer = await audioRes.arrayBuffer();
 
   // 3. Send to Whisper
-  const form = new FormData();
+  const form = new globalThis.FormData();
   form.append('file', new Blob([audioBuffer], { type: 'audio/ogg' }), 'audio.ogg');
   form.append('model', 'whisper-1');
   form.append('language', 'es');
