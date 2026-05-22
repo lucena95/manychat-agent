@@ -42,26 +42,19 @@ async function createManyChatFlow(keyword) {
 
     // Paso 2: Obtener CSRF token y datos del flujo actual
     console.log('[ManyChat] Obteniendo flujo...');
-    const { flowData, csrfToken } = await page.evaluate(async (accountId, flowNs) => {
-      // Hacer la petición GET para obtener el flujo
+    const { flowData, csrfToken } = await page.evaluate(async ({ accountId, flowNs }) => {
       const res = await fetch(`https://app.manychat.com/${accountId}/easyBuilder/get?flow_ns=${flowNs}`, {
         credentials: 'include',
         headers: { 'x-requested-with': 'XMLHttpRequest' }
       });
 
-      // Extraer CSRF del meta tag o de cookies
-      const csrfMeta = document.querySelector('meta[name="csrf-token"]');
-      let csrf = csrfMeta?.content || '';
-
-      // Buscar en el HTML el token
-      if (!csrf) {
-        const match = document.documentElement.innerHTML.match(/csrf[_-]token['":\s]+['"]([a-f0-9]+)['"]/i);
-        csrf = match?.[1] || '';
-      }
+      // Buscar CSRF token en el HTML
+      const match = document.documentElement.innerHTML.match(/csrf[_-]token['":\s]+['"]([a-f0-9]+)['"]/i);
+      const csrf = match?.[1] || document.querySelector('meta[name="csrf-token"]')?.content || '';
 
       const text = await res.text();
-      return { flowData: text, csrfToken: csrf, status: res.status };
-    }, ACCOUNT_ID, ACTIVE_FLOW_NS);
+      return { flowData: text, csrfToken: csrf };
+    }, { accountId: ACCOUNT_ID, flowNs: ACTIVE_FLOW_NS });
 
     if (!flowData || flowData.includes('DOCTYPE')) {
       throw new Error(`No se pudo obtener el flujo (status: sin JSON)`);
@@ -96,7 +89,7 @@ async function createManyChatFlow(keyword) {
 
     // Paso 4: Guardar via easyBuilder/edit
     console.log('[ManyChat] Guardando...');
-    const saveResult = await page.evaluate(async (accountId, flowNs, structure, csrf) => {
+    const saveResult = await page.evaluate(async ({ accountId, flowNs, structure, csrf }) => {
       const body = JSON.stringify({ flow_ns: flowNs, structure: structure.structure });
 
       const res = await fetch(`https://app.manychat.com/${accountId}/easyBuilder/edit`, {
@@ -113,7 +106,7 @@ async function createManyChatFlow(keyword) {
 
       const text = await res.text();
       return { status: res.status, body: text.substring(0, 300) };
-    }, ACCOUNT_ID, ACTIVE_FLOW_NS, modifiedFlow, csrfToken);
+    }, { accountId: ACCOUNT_ID, flowNs: ACTIVE_FLOW_NS, structure: modifiedFlow, csrf: csrfToken });
 
     console.log(`[ManyChat] Guardado: ${saveResult.status} — ${saveResult.body.substring(0, 100)}`);
 
