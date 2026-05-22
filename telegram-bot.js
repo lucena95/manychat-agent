@@ -12,10 +12,10 @@ app.use(express.json());
 app.get('/', (req, res) => res.json({ status: 'ok', service: 'ManyChat Agent + Telegram Bot' }));
 
 app.post('/webhook/nuevo-reel', async (req, res) => {
-  const { secret, keyword } = req.body;
+  const { secret, palabra } = req.body;
   if (secret !== WEBHOOK_SECRET) return res.status(401).json({ error: 'Unauthorized' });
-  if (!keyword) return res.status(400).json({ error: 'Keyword no encontrada' });
-  res.json({ status: 'processing', keyword });
+  if (!palabra) return res.status(400).json({ error: 'palabra no encontrada' });
+  res.json({ status: 'processing', palabra });
 });
 
 const PORT = process.env.PORT || 3000;
@@ -63,19 +63,19 @@ async function transcribeAudio(fileId) {
   return whisperData.text || '';
 }
 
-// ─── Extract keyword from text ────────────────────────────────────────────────
-function extractKeyword(text) {
+// ─── Extract palabra from text ────────────────────────────────────────────────
+function extractPalabra(text) {
   const t = text.toLowerCase();
-  // Patterns: "keyword pilates", "reel pilates", "nuevo reel pilates", "/reel pilates"
+  // Patterns: "palabra pilates", "reel pilates", "nuevo reel pilates", "/reel pilates"
   const patterns = [
-    /(?:keyword|reel|flujo)[:\s]+([a-z0-9_]+)/i,
+    /(?:palabra|reel|flujo)[:\s]+([a-z0-9_]+)/i,
     /(?:crea|nuevo|crear)[^a-z]*([a-z]{3,})/i,
   ];
   for (const p of patterns) {
     const m = t.match(p);
     if (m) return m[1].toUpperCase().replace(/\s+/g, '_');
   }
-  // If single word, use it as keyword
+  // If single word, use it as palabra
   const words = text.trim().split(/\s+/);
   if (words.length === 1 && words[0].length > 2) return words[0].toUpperCase();
   return null;
@@ -95,22 +95,22 @@ async function sendPhoto(chatId, imageBuffer, caption) {
   });
 }
 
-async function createReel(chatId, keyword) {
-  await tg('sendMessage', { chat_id: chatId, text: `⏳ Abriendo ManyChat en la nube para *REEL\\_${keyword}*...`, parse_mode: 'Markdown' });
+async function createReel(chatId, palabra) {
+  await tg('sendMessage', { chat_id: chatId, text: `⏳ Abriendo ManyChat en la nube para *REEL\\_${palabra}*...`, parse_mode: 'Markdown' });
   try {
-    const result = await createManyChatFlow(keyword);
+    const result = await createManyChatFlow(palabra);
 
     // Enviar screenshot como prueba
     if (result.screenshot) {
       await sendPhoto(
         chatId,
         result.screenshot,
-        `✅ *REEL\\_${keyword}* creado en ManyChat\n\nURL: \`https://wa.me/${GHL_PHONE}?text=REEL\\_${keyword}\``
+        `✅ *REEL\\_${palabra}* creado en ManyChat\n\nURL: \`https://wa.me/${GHL_PHONE}?text=REEL\\_${palabra}\``
       );
     } else {
       await tg('sendMessage', {
         chat_id: chatId,
-        text: `✅ *REEL\\_${keyword}* listo\n\nURL: \`https://wa.me/${GHL_PHONE}?text=REEL\\_${keyword}\``,
+        text: `✅ *REEL\\_${palabra}* listo\n\nURL: \`https://wa.me/${GHL_PHONE}?text=REEL\\_${palabra}\``,
         parse_mode: 'Markdown'
       });
     }
@@ -141,11 +141,11 @@ async function handleMessage(msg) {
       console.log(`[${chatId}] Transcripción: "${transcribed}"`);
       await tg('sendMessage', { chat_id: chatId, text: `📝 Escuché: "${transcribed}"` });
 
-      const keyword = extractKeyword(transcribed);
-      if (keyword) {
-        await createReel(chatId, keyword);
+      const palabra = extractPalabra(transcribed);
+      if (palabra) {
+        await createReel(chatId, palabra);
       } else {
-        await tg('sendMessage', { chat_id: chatId, text: `No detecté una keyword. Di algo como:\n"keyword PILATES" o "reel yoga"` });
+        await tg('sendMessage', { chat_id: chatId, text: `No detecté una palabra. Di algo como:\n"palabra PILATES" o "reel yoga"` });
       }
     } catch (e) {
       await tg('sendMessage', { chat_id: chatId, text: `❌ Error transcribiendo: ${e.message}` });
@@ -157,7 +157,7 @@ async function handleMessage(msg) {
   if (text.startsWith('/start')) {
     await tg('sendMessage', {
       chat_id: chatId,
-      text: `🤖 *Agente LeadsMastery*\n\nCrea flujos de ManyChat por texto o nota de voz.\n\n*Texto:*\n• /reel PILATES\n• "keyword yoga"\n\n*Voz:*\nDi "keyword pilates" o "nuevo reel yoga"`,
+      text: `🤖 *Agente LeadsMastery*\n\nCrea flujos de ManyChat por texto o nota de voz.\n\n*Texto:*\n• /reel PILATES\n• "palabra yoga"\n\n*Voz:*\nDi "palabra pilates" o "nuevo reel yoga"`,
       parse_mode: 'Markdown'
     });
     return;
@@ -169,21 +169,21 @@ async function handleMessage(msg) {
   }
 
   if (text.match(/^\/reel\s+(.+)/i)) {
-    const keyword = text.match(/^\/reel\s+(.+)/i)[1].trim().toUpperCase().replace(/\s+/g, '_');
-    await createReel(chatId, keyword);
+    const palabra = text.match(/^\/reel\s+(.+)/i)[1].trim().toUpperCase().replace(/\s+/g, '_');
+    await createReel(chatId, palabra);
     return;
   }
 
   // Natural language text
-  const keyword = extractKeyword(text);
-  if (keyword) {
-    await createReel(chatId, keyword);
+  const palabra = extractPalabra(text);
+  if (palabra) {
+    await createReel(chatId, palabra);
     return;
   }
 
   await tg('sendMessage', {
     chat_id: chatId,
-    text: `Di o escribe:\n/reel PILATES\no una nota de voz: "keyword pilates"`
+    text: `Di o escribe:\n/reel PILATES\no una nota de voz: "palabra pilates"`
   });
 }
 
