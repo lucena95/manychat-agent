@@ -1,5 +1,5 @@
-// ManyChat automation via Browserless (Chrome en la nube)
-// Estrategia: usar el API interno de ManyChat via fetch autenticado
+// ManyChat automation via Browserless
+// Usa el endpoint interno easyBuilder/edit (capturado via reverse engineering)
 const { chromium } = require('playwright');
 const path = require('path');
 const fs = require('fs');
@@ -9,24 +9,19 @@ const BROWSERLESS_TOKEN = process.env.BROWSERLESS_TOKEN || 'leadsmastery2024';
 const SESSION_FILE = process.env.SESSION_FILE || path.join(__dirname, 'session.json');
 const ACCOUNT_ID = 'fb105106091491726';
 const GHL_PHONE = '34663117022';
-const BASE_FLOW_NS = 'content20260521152458_230387';
+
+// Flow NS del flujo activo "copy 32" — se actualiza automáticamente al crear nuevos
+const ACTIVE_FLOW_NS = process.env.ACTIVE_FLOW_NS || 'content20260522004258_498566';
 
 async function createManyChatFlow(keyword) {
-  console.log(`[ManyChat] Conectando a Browserless para palabra: ${keyword}`);
+  console.log(`[ManyChat] Iniciando para palabra: ${keyword}`);
 
-  const wsUrl = `${BROWSERLESS_URL}?token=${BROWSERLESS_TOKEN}`;
-  let browser;
+  const browser = await chromium.connectOverCDP(
+    `${BROWSERLESS_URL}?token=${BROWSERLESS_TOKEN}`
+  ).catch(e => { throw new Error(`Browserless no disponible: ${e.message}`); });
 
-  try {
-    browser = await chromium.connectOverCDP(wsUrl);
-    console.log(`[ManyChat] Conectado a Browserless ✅`);
-  } catch (e) {
-    throw new Error(`Browserless no disponible: ${e.message}`);
-  }
-
-  const sessionExists = fs.existsSync(SESSION_FILE);
   const context = await browser.newContext({
-    storageState: sessionExists ? SESSION_FILE : undefined,
+    storageState: fs.existsSync(SESSION_FILE) ? SESSION_FILE : undefined,
     viewport: { width: 1280, height: 900 },
     userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
   });
@@ -34,100 +29,106 @@ async function createManyChatFlow(keyword) {
   const page = await context.newPage();
 
   try {
-    // Paso 1: Cargar ManyChat para obtener cookies de sesión válidas
-    console.log(`[ManyChat] Iniciando sesión...`);
+    // Paso 1: Cargar ManyChat para activar las cookies
+    console.log('[ManyChat] Conectando...');
     await page.goto(`https://app.manychat.com/${ACCOUNT_ID}/dashboard`, {
-      waitUntil: 'domcontentloaded',
-      timeout: 60000
+      waitUntil: 'domcontentloaded', timeout: 60000
     });
-    await page.waitForTimeout(3000);
+    await page.waitForTimeout(2000);
 
     if (page.url().includes('signin') || page.url().includes('login')) {
-      throw new Error('Sesión expirada — ejecuta /renovar_sesion');
+      throw new Error('Sesión expirada');
     }
 
-    console.log(`[ManyChat] Dashboard abierto ✅`);
-
-    // Paso 2: Usar el API interno de ManyChat via fetch desde el contexto del browser
-    // (ya tiene las cookies de sesión cargadas)
-    const result = await page.evaluate(async ({ accountId, flowNs, keyword, phone }) => {
-      // Obtener el flujo actual
-      const getRes = await fetch(`/${accountId}/easyBuilder/get?flow_ns=${flowNs}`, {
+    // Paso 2: Obtener CSRF token y datos del flujo actual
+    console.log('[ManyChat] Obteniendo flujo...');
+    const { flowData, csrfToken } = await page.evaluate(async (accountId, flowNs) => {
+      // Hacer la petición GET para obtener el flujo
+      const res = await fetch(`https://app.manychat.com/${accountId}/easyBuilder/get?flow_ns=${flowNs}`, {
         credentials: 'include',
-        headers: { 'Content-Type': 'application/json' }
+        headers: { 'x-requested-with': 'XMLHttpRequest' }
       });
 
-      if (!getRes.ok) return { error: `GET falló: ${getRes.status}` };
-      const flowData = await getRes.json();
+      // Extraer CSRF del meta tag o de cookies
+      const csrfMeta = document.querySelector('meta[name="csrf-token"]');
+      let csrf = csrfMeta?.content || '';
 
-      if (!flowData || flowData.status === 'error') {
-        return { error: 'No se pudo obtener el flujo: ' + JSON.stringify(flowData).substring(0, 100) };
+      // Buscar en el HTML el token
+      if (!csrf) {
+        const match = document.documentElement.innerHTML.match(/csrf[_-]token['":\s]+['"]([a-f0-9]+)['"]/i);
+        csrf = match?.[1] || '';
       }
 
-      // Modificar la keyword en el trigger
-      const flow = flowData.data || flowData;
-      let modified = false;
+      const text = await res.text();
+      return { flowData: text, csrfToken: csrf, status: res.status };
+    }, ACCOUNT_ID, ACTIVE_FLOW_NS);
 
-      // Buscar y cambiar keyword en triggers
-      const flowStr = JSON.stringify(flow);
-      const newFlowStr = flowStr.replace(
-        /"include_keywords":\s*\[[^\]]*\]/g,
-        `"include_keywords":["${keyword}"]`
-      );
-
-      // También cambiar la URL wa.me
-      const finalStr = newFlowStr.replace(
-        /https:\/\/wa\.me\/[^"]+/g,
-        `https://wa.me/${phone}?text=REEL_${keyword}`
-      );
-
-      if (flowStr === finalStr) {
-        return { error: 'No se encontraron patrones para cambiar', preview: flowStr.substring(0, 200) };
-      }
-
-      // Guardar el flujo modificado
-      const newFlow = JSON.parse(finalStr);
-      const saveRes = await fetch(`/${accountId}/easyBuilder/save`, {
-        method: 'POST',
-        credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ flow_ns: flowNs, data: newFlow })
-      });
-
-      if (!saveRes.ok) return { error: `SAVE falló: ${saveRes.status}` };
-      const saveData = await saveRes.json();
-
-      // Publicar
-      const publishRes = await fetch(`/${accountId}/easyBuilder/publish`, {
-        method: 'POST',
-        credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ flow_ns: flowNs })
-      });
-
-      const publishData = await publishRes.json();
-
-      return {
-        success: true,
-        saved: saveData.status,
-        published: publishData.status
-      };
-    }, { accountId: ACCOUNT_ID, flowNs: BASE_FLOW_NS, keyword, phone: GHL_PHONE });
-
-    console.log(`[ManyChat] Resultado API:`, result);
-
-    if (result.error) {
-      throw new Error(result.error);
+    if (!flowData || flowData.includes('DOCTYPE')) {
+      throw new Error(`No se pudo obtener el flujo (status: sin JSON)`);
     }
 
-    // Screenshot como prueba
-    await page.goto(`https://app.manychat.com/${ACCOUNT_ID}/cms/easy-builder/${BASE_FLOW_NS}`, {
-      waitUntil: 'domcontentloaded',
-      timeout: 45000
-    }).catch(() => {}); // No bloquear si falla el screenshot
+    const flow = JSON.parse(flowData);
+    console.log(`[ManyChat] Flujo obtenido: ${flow.flow_name} (${flow.status})`);
+
+    // Paso 3: Modificar keyword y URL en el JSON
+    const flowStr = JSON.stringify(flow);
+
+    // Cambiar keyword
+    const newFlowStr = flowStr.replace(
+      /"include_keywords":\s*\[[^\]]*\]/g,
+      `"include_keywords":["${keyword}"]`
+    );
+
+    // Cambiar URL wa.me
+    const finalStr = newFlowStr.replace(
+      /"url":"https:\/\/wa\.me\/[^"]+"/g,
+      `"url":"https://wa.me/${GHL_PHONE}?text=REEL_${keyword}"`
+    );
+
+    const changes = (flowStr !== newFlowStr ? 'keyword ' : '') + (newFlowStr !== finalStr ? 'url' : '');
+    console.log(`[ManyChat] Cambios: ${changes || 'ninguno detectado'}`);
+
+    if (flowStr === finalStr) {
+      console.warn('[ManyChat] AVISO: No se detectaron cambios en el JSON');
+    }
+
+    const modifiedFlow = JSON.parse(finalStr);
+
+    // Paso 4: Guardar via easyBuilder/edit
+    console.log('[ManyChat] Guardando...');
+    const saveResult = await page.evaluate(async (accountId, flowNs, structure, csrf) => {
+      const body = JSON.stringify({ flow_ns: flowNs, structure: structure.structure });
+
+      const res = await fetch(`https://app.manychat.com/${accountId}/easyBuilder/edit`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-requested-with': 'XMLHttpRequest',
+          'x-csrf-token': csrf,
+          'x-frontend-bundle': '936'
+        },
+        body
+      });
+
+      const text = await res.text();
+      return { status: res.status, body: text.substring(0, 300) };
+    }, ACCOUNT_ID, ACTIVE_FLOW_NS, modifiedFlow, csrfToken);
+
+    console.log(`[ManyChat] Guardado: ${saveResult.status} — ${saveResult.body.substring(0, 100)}`);
+
+    if (saveResult.status !== 200) {
+      throw new Error(`Error al guardar: ${saveResult.status} ${saveResult.body}`);
+    }
+
+    // Paso 5: Screenshot como prueba
+    await page.goto(`https://app.manychat.com/${ACCOUNT_ID}/cms/easy-builder/${ACTIVE_FLOW_NS}`, {
+      waitUntil: 'domcontentloaded', timeout: 30000
+    }).catch(() => {});
     await page.waitForTimeout(2000);
     const screenshot = await page.screenshot({ type: 'jpeg', quality: 60 }).catch(() => null);
 
+    // Guardar sesión actualizada
     await context.storageState({ path: SESSION_FILE });
 
     console.log(`[ManyChat] ✅ REEL_${keyword} listo`);
@@ -145,17 +146,6 @@ async function createManyChatFlow(keyword) {
     await context.close();
     await browser.close();
   }
-}
-
-async function dismissCookieBanner(page) {
-  try {
-    await page.evaluate(() => {
-      const banner = document.getElementById('usercentrics-cmp-ui');
-      if (banner) banner.remove();
-      document.body.style.pointerEvents = 'auto';
-      document.body.style.overflow = 'auto';
-    });
-  } catch (e) {}
 }
 
 module.exports = { createManyChatFlow };
