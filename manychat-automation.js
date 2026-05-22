@@ -61,8 +61,20 @@ async function createManyChatFlow(keyword) {
       throw new Error('Sesión expirada');
     }
 
-    // Esperar a que el flujo sea capturado
+    // Esperar a que el flujo sea capturado y el CSRF token esté disponible
     await page.waitForTimeout(4000);
+
+    // Si no tenemos CSRF, hacer click en Editar para forzar un POST request que lo incluya
+    if (!capturedCsrf) {
+      console.log('[ManyChat] CSRF no capturado, activando Editar...');
+      const editBtn = page.getByText('Editar').first();
+      if (await editBtn.isVisible({ timeout: 5000 }).catch(() => false)) {
+        await editBtn.click();
+        await page.waitForTimeout(2000);
+      }
+    }
+
+    console.log(`[ManyChat] CSRF token: ${capturedCsrf ? capturedCsrf.substring(0,8)+'...' : 'NO ENCONTRADO'}`);
 
     if (!capturedFlow) {
       throw new Error('No se capturó el flujo — posible sesión expirada o timeout');
@@ -116,10 +128,15 @@ async function createManyChatFlow(keyword) {
       csrf: capturedCsrf || ''
     });
 
-    console.log(`[ManyChat] Guardado: HTTP ${saveResult.status} — ${saveResult.body.substring(0, 80)}`);
+    console.log(`[ManyChat] Guardado: HTTP ${saveResult.status} — ${saveResult.body}`);
 
     if (saveResult.status !== 200) {
-      throw new Error(`Error al guardar (HTTP ${saveResult.status}): ${saveResult.body.substring(0, 100)}`);
+      throw new Error(`Error al guardar (HTTP ${saveResult.status}): ${saveResult.body}`);
+    }
+
+    // Verificar que la respuesta indica éxito real
+    if (saveResult.body.includes('error') || saveResult.body.includes('csrf') || saveResult.body.includes('DOCTYPE')) {
+      throw new Error(`ManyChat rechazó el guardado: ${saveResult.body}`);
     }
 
     // Guardar sesión actualizada
