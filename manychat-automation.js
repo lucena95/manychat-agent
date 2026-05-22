@@ -15,25 +15,32 @@ const ACCOUNT_ID = 'fb105106091491726';
 const GHL_PHONE = '34663117022';
 
 async function getActiveFlowNs(page) {
-  // Buscar el flujo activo más reciente de tipo "next_post"
-  const flows = await page.evaluate(async (accountId) => {
-    const res = await fetch(`/fb${accountId}/cms/getFlows?path=%2F&field=modified&order=desc`, {
-      credentials: 'include', headers: { 'x-requested-with': 'XMLHttpRequest' }
-    });
-    const text = await res.text();
-    try { return JSON.parse(text); } catch(e) { return null; }
-  }, ACCOUNT_ID);
+  // Interceptar la lista de flujos (el fetch directo da 404, route interception sí funciona)
+  let flowsList = null;
+  await page.route('**/cms/getFlows**', async (route) => {
+    const response = await route.fetch();
+    const body = await response.text();
+    try { flowsList = JSON.parse(body); } catch(e) {}
+    await route.fulfill({ response, body });
+  });
 
-  if (!flows?.data?.flows) return null;
+  await page.goto(`https://app.manychat.com/${ACCOUNT_ID}/cms?path=/&field=modified&order=desc`, {
+    waitUntil: 'domcontentloaded', timeout: 30000
+  });
+  await page.waitForTimeout(3000);
 
-  // Encontrar el primero que sea next_post y esté activo
-  const activeFlow = flows.data.flows.find(f =>
-    f.campaign_type === 'easy_builder_cgt_next_post_multi_links' &&
-    f.status === 'active' &&
-    !f.deleted
+  if (!flowsList?.list) return null;
+
+  // Encontrar el primer flujo de tipo "next_post" (comentarios → DM)
+  const flow = flowsList.list.find(f =>
+    f.type === 'flow' &&
+    f.triggers?.widgets?.some(w =>
+      w.widget_type === 'feed_comment_trigger' &&
+      w.data?.feed_comment_settings?.post_covered_area === 'next_post'
+    )
   );
 
-  return activeFlow?.ns || null;
+  return flow?.ns || null;
 }
 
 async function createManyChatFlow(keyword) {
