@@ -52,7 +52,7 @@ async function createManyChatFlow(keyword) {
     // (ya tiene las cookies de sesión cargadas)
     const result = await page.evaluate(async ({ accountId, flowNs, keyword, phone }) => {
       // Obtener el flujo actual
-      const getRes = await fetch(`/fb${accountId}/easyBuilder/get?flow_ns=${flowNs}`, {
+      const getRes = await fetch(`/${accountId}/easyBuilder/get?flow_ns=${flowNs}`, {
         credentials: 'include',
         headers: { 'Content-Type': 'application/json' }
       });
@@ -87,7 +87,7 @@ async function createManyChatFlow(keyword) {
 
       // Guardar el flujo modificado
       const newFlow = JSON.parse(finalStr);
-      const saveRes = await fetch(`/fb${accountId}/easyBuilder/save`, {
+      const saveRes = await fetch(`/${accountId}/easyBuilder/save`, {
         method: 'POST',
         credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
@@ -98,7 +98,7 @@ async function createManyChatFlow(keyword) {
       const saveData = await saveRes.json();
 
       // Publicar
-      const publishRes = await fetch(`/fb${accountId}/easyBuilder/publish`, {
+      const publishRes = await fetch(`/${accountId}/easyBuilder/publish`, {
         method: 'POST',
         credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
