@@ -1,5 +1,5 @@
 // ManyChat automation via Browserless
-// Usa el endpoint interno easyBuilder/edit (capturado via reverse engineering)
+// Estrategia: interceptar el GET del flujo y hacer el POST edit con los datos capturados
 const { chromium } = require('playwright');
 const path = require('path');
 const fs = require('fs');
@@ -9,8 +9,6 @@ const BROWSERLESS_TOKEN = process.env.BROWSERLESS_TOKEN || 'leadsmastery2024';
 const SESSION_FILE = process.env.SESSION_FILE || path.join(__dirname, 'session.json');
 const ACCOUNT_ID = 'fb105106091491726';
 const GHL_PHONE = '34663117022';
-
-// Flow NS del flujo activo "copy 32" — se actualiza automáticamente al crear nuevos
 const ACTIVE_FLOW_NS = process.env.ACTIVE_FLOW_NS || 'content20260522004258_498566';
 
 async function createManyChatFlow(keyword) {
@@ -29,95 +27,105 @@ async function createManyChatFlow(keyword) {
   const page = await context.newPage();
 
   try {
-    // Paso 1: Cargar ManyChat para activar las cookies
-    console.log('[ManyChat] Conectando...');
-    await page.goto(`https://app.manychat.com/${ACCOUNT_ID}/dashboard`, {
-      waitUntil: 'domcontentloaded', timeout: 60000
-    });
-    await page.waitForTimeout(2000);
+    // Interceptar el GET del flujo para capturar sus datos y el CSRF token
+    let capturedFlow = null;
+    let capturedCsrf = null;
 
+    await context.route(`**/${ACCOUNT_ID}/easyBuilder/get*`, async (route) => {
+      const response = await route.fetch();
+      const body = await response.text();
+      try {
+        capturedFlow = JSON.parse(body);
+        console.log(`[ManyChat] Flujo capturado: ${capturedFlow.flow_name}`);
+      } catch (e) {
+        console.log(`[ManyChat] Respuesta no es JSON: ${body.substring(0, 100)}`);
+      }
+      await route.fulfill({ response, body });
+    });
+
+    // Interceptar cualquier request para capturar el CSRF token
+    context.on('request', req => {
+      const csrf = req.headers()['x-csrf-token'];
+      if (csrf) capturedCsrf = csrf;
+    });
+
+    // Navegar al Easy Builder — esto dispara el GET automáticamente
+    console.log('[ManyChat] Cargando Easy Builder...');
+    await page.goto(
+      `https://app.manychat.com/${ACCOUNT_ID}/cms/easy-builder/${ACTIVE_FLOW_NS}`,
+      { waitUntil: 'domcontentloaded', timeout: 60000 }
+    );
+
+    // Verificar sesión
     if (page.url().includes('signin') || page.url().includes('login')) {
       throw new Error('Sesión expirada');
     }
 
-    // Paso 2: Obtener CSRF token y datos del flujo actual
-    console.log('[ManyChat] Obteniendo flujo...');
-    const { flowData, csrfToken } = await page.evaluate(async ({ accountId, flowNs }) => {
-      const res = await fetch(`https://app.manychat.com/${accountId}/easyBuilder/get?flow_ns=${flowNs}`, {
-        credentials: 'include',
-        headers: { 'x-requested-with': 'XMLHttpRequest' }
-      });
+    // Esperar a que el flujo sea capturado
+    await page.waitForTimeout(4000);
 
-      // Buscar CSRF token en el HTML
-      const match = document.documentElement.innerHTML.match(/csrf[_-]token['":\s]+['"]([a-f0-9]+)['"]/i);
-      const csrf = match?.[1] || document.querySelector('meta[name="csrf-token"]')?.content || '';
-
-      const text = await res.text();
-      return { flowData: text, csrfToken: csrf };
-    }, { accountId: ACCOUNT_ID, flowNs: ACTIVE_FLOW_NS });
-
-    if (!flowData || flowData.includes('DOCTYPE')) {
-      throw new Error(`No se pudo obtener el flujo (status: sin JSON)`);
+    if (!capturedFlow) {
+      throw new Error('No se capturó el flujo — posible sesión expirada o timeout');
     }
 
-    const flow = JSON.parse(flowData);
-    console.log(`[ManyChat] Flujo obtenido: ${flow.flow_name} (${flow.status})`);
+    console.log(`[ManyChat] Flujo OK: ${capturedFlow.flow_name} (${capturedFlow.status})`);
 
-    // Paso 3: Modificar keyword y URL en el JSON
-    const flowStr = JSON.stringify(flow);
+    // Modificar la keyword y la URL en el JSON
+    const flowStr = JSON.stringify(capturedFlow);
 
-    // Cambiar keyword
-    const newFlowStr = flowStr.replace(
+    const step1 = flowStr.replace(
       /"include_keywords":\s*\[[^\]]*\]/g,
       `"include_keywords":["${keyword}"]`
     );
-
-    // Cambiar URL wa.me
-    const finalStr = newFlowStr.replace(
+    const step2 = step1.replace(
       /"url":"https:\/\/wa\.me\/[^"]+"/g,
       `"url":"https://wa.me/${GHL_PHONE}?text=REEL_${keyword}"`
     );
 
-    const changes = (flowStr !== newFlowStr ? 'keyword ' : '') + (newFlowStr !== finalStr ? 'url' : '');
-    console.log(`[ManyChat] Cambios: ${changes || 'ninguno detectado'}`);
-
-    if (flowStr === finalStr) {
-      console.warn('[ManyChat] AVISO: No se detectaron cambios en el JSON');
+    if (flowStr === step2) {
+      console.warn('[ManyChat] No se encontraron patrones para cambiar');
+    } else {
+      const changes = [];
+      if (flowStr !== step1) changes.push('keyword');
+      if (step1 !== step2) changes.push('URL');
+      console.log(`[ManyChat] Cambiado: ${changes.join(', ')}`);
     }
 
-    const modifiedFlow = JSON.parse(finalStr);
+    const modifiedFlow = JSON.parse(step2);
 
-    // Paso 4: Guardar via easyBuilder/edit
+    // Guardar via POST easyBuilder/edit — usando fetch desde el contexto de la página
     console.log('[ManyChat] Guardando...');
     const saveResult = await page.evaluate(async ({ accountId, flowNs, structure, csrf }) => {
-      const body = JSON.stringify({ flow_ns: flowNs, structure: structure.structure });
-
       const res = await fetch(`https://app.manychat.com/${accountId}/easyBuilder/edit`, {
         method: 'POST',
         credentials: 'include',
         headers: {
           'Content-Type': 'application/json',
           'x-requested-with': 'XMLHttpRequest',
-          'x-csrf-token': csrf,
+          'x-csrf-token': csrf || '',
           'x-frontend-bundle': '936'
         },
-        body
+        body: JSON.stringify({ flow_ns: flowNs, structure: structure.structure })
       });
-
       const text = await res.text();
       return { status: res.status, body: text.substring(0, 300) };
-    }, { accountId: ACCOUNT_ID, flowNs: ACTIVE_FLOW_NS, structure: modifiedFlow, csrf: csrfToken });
+    }, {
+      accountId: ACCOUNT_ID,
+      flowNs: ACTIVE_FLOW_NS,
+      structure: modifiedFlow,
+      csrf: capturedCsrf || ''
+    });
 
-    console.log(`[ManyChat] Guardado: ${saveResult.status} — ${saveResult.body.substring(0, 100)}`);
+    console.log(`[ManyChat] Guardado: HTTP ${saveResult.status} — ${saveResult.body.substring(0, 80)}`);
 
     if (saveResult.status !== 200) {
-      throw new Error(`Error al guardar: ${saveResult.status} ${saveResult.body}`);
+      throw new Error(`Error al guardar (HTTP ${saveResult.status}): ${saveResult.body.substring(0, 100)}`);
     }
 
     // Guardar sesión actualizada
     await context.storageState({ path: SESSION_FILE });
 
-    console.log(`[ManyChat] ✅ REEL_${keyword} listo`);
+    console.log(`[ManyChat] ✅ REEL_${keyword} configurado`);
     return {
       success: true,
       keyword,
