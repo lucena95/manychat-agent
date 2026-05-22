@@ -82,40 +82,25 @@ function extractPalabra(text) {
 }
 
 // ─── Create ManyChat flow ─────────────────────────────────────────────────────
-async function sendPhoto(chatId, imageBuffer, caption) {
-  const form = new FormData();
-  form.append('chat_id', String(chatId));
-  form.append('caption', caption);
-  form.append('parse_mode', 'Markdown');
-  form.append('photo', new Blob([imageBuffer], { type: 'image/jpeg' }), 'screenshot.jpg');
-
-  await fetch(`https://api.telegram.org/bot${TOKEN}/sendPhoto`, {
-    method: 'POST',
-    body: form
-  });
-}
-
 async function createReel(chatId, palabra) {
-  await tg('sendMessage', { chat_id: chatId, text: `⏳ Abriendo ManyChat en la nube para *REEL\\_${palabra}*...`, parse_mode: 'Markdown' });
+  await tg('sendMessage', { chat_id: chatId, text: `⏳ Configurando ManyChat para *REEL\\_${palabra}*...`, parse_mode: 'Markdown' });
   try {
-    const result = await createManyChatFlow(palabra);
-
-    // Enviar screenshot como prueba
-    if (result.screenshot) {
-      await sendPhoto(
-        chatId,
-        result.screenshot,
-        `✅ *REEL\\_${palabra}* creado en ManyChat\n\nURL: \`https://wa.me/${GHL_PHONE}?text=REEL\\_${palabra}\``
-      );
-    } else {
+    await createManyChatFlow(palabra);
+    await tg('sendMessage', {
+      chat_id: chatId,
+      text: `✅ *REEL\\_${palabra}* listo\n\n📌 CTA: _"Comenta ${palabra} para recibir el enlace"_\n\n🔗 \`https://wa.me/${GHL_PHONE}?text=REEL\\_${palabra}\``,
+      parse_mode: 'Markdown'
+    });
+  } catch (e) {
+    const expired = e.message?.includes('expirada') || e.message?.includes('signin') || e.message?.includes('login');
+    if (expired) {
       await tg('sendMessage', {
         chat_id: chatId,
-        text: `✅ *REEL\\_${palabra}* listo\n\nURL: \`https://wa.me/${GHL_PHONE}?text=REEL\\_${palabra}\``,
-        parse_mode: 'Markdown'
+        text: `⚠️ Sesión ManyChat expirada\n\nAbre Claude Code en el Mac y dime:\n"renovar sesión ManyChat"\nTarda 2 min.`
       });
+    } else {
+      await tg('sendMessage', { chat_id: chatId, text: `❌ Error: ${e.message}` });
     }
-  } catch (e) {
-    await tg('sendMessage', { chat_id: chatId, text: `❌ Error: ${e.message}` });
   }
 }
 

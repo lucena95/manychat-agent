@@ -121,13 +121,6 @@ async function createManyChatFlow(keyword) {
       throw new Error(`Error al guardar: ${saveResult.status} ${saveResult.body}`);
     }
 
-    // Paso 5: Screenshot como prueba
-    await page.goto(`https://app.manychat.com/${ACCOUNT_ID}/cms/easy-builder/${ACTIVE_FLOW_NS}`, {
-      waitUntil: 'domcontentloaded', timeout: 30000
-    }).catch(() => {});
-    await page.waitForTimeout(2000);
-    const screenshot = await page.screenshot({ type: 'jpeg', quality: 60 }).catch(() => null);
-
     // Guardar sesión actualizada
     await context.storageState({ path: SESSION_FILE });
 
@@ -135,8 +128,7 @@ async function createManyChatFlow(keyword) {
     return {
       success: true,
       keyword,
-      url: `https://wa.me/${GHL_PHONE}?text=REEL_${keyword}`,
-      screenshot
+      url: `https://wa.me/${GHL_PHONE}?text=REEL_${keyword}`
     };
 
   } catch (err) {
