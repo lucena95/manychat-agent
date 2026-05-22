@@ -1,4 +1,5 @@
 // ManyChat automation via Browserless (Chrome en la nube)
+// Estrategia: usar el API interno de ManyChat via fetch autenticado
 const { chromium } = require('playwright');
 const path = require('path');
 const fs = require('fs');
@@ -8,67 +9,21 @@ const BROWSERLESS_TOKEN = process.env.BROWSERLESS_TOKEN || 'leadsmastery2024';
 const SESSION_FILE = process.env.SESSION_FILE || path.join(__dirname, 'session.json');
 const ACCOUNT_ID = 'fb105106091491726';
 const GHL_PHONE = '34663117022';
-
-// Borra el flujo más reciente (el que acabamos de modificar la vez anterior)
-async function deleteLatestFlow(page) {
-  try {
-    await page.goto(`https://app.manychat.com/${ACCOUNT_ID}/cms?path=/&field=modified&order=desc`, {
-      waitUntil: 'domcontentloaded', timeout: 60000
-    });
-    await page.waitForTimeout(2000);
-    await dismissCookieBanner(page);
-
-    // Buscar el botón de menú (3 puntos) del primer flujo y borrarlo
-    const deleted = await page.evaluate(() => {
-      // Encontrar el primer flujo de la lista y hacer clic en su menú
-      const cards = document.querySelectorAll('[class*="_card_"]');
-      if (cards.length === 0) return 'no cards';
-
-      // Buscar el botón de opciones en el primer card
-      const firstCard = cards[0];
-      const menuBtn = firstCard.querySelector('[class*="interactable"], [class*="anchor"]');
-      if (menuBtn) {
-        menuBtn.click();
-        return 'menu clicked';
-      }
-      return 'no menu button';
-    });
-
-    await page.waitForTimeout(1000);
-
-    // Buscar y clicar "Eliminar" en el menú desplegable
-    const deleteBtn = page.getByText('Eliminar').first();
-    if (await deleteBtn.isVisible({ timeout: 3000 }).catch(() => false)) {
-      await deleteBtn.click();
-      await page.waitForTimeout(1000);
-      // Confirmar borrado si aparece diálogo
-      const confirmBtn = page.getByText('Eliminar').nth(1);
-      if (await confirmBtn.isVisible({ timeout: 2000 }).catch(() => false)) {
-        await confirmBtn.click();
-      }
-      console.log('[ManyChat] Flujo anterior borrado ✅');
-    }
-  } catch (e) {
-    console.log('[ManyChat] No se pudo borrar flujo anterior:', e.message);
-  }
-}
+const BASE_FLOW_NS = 'content20260521152458_230387';
 
 async function createManyChatFlow(keyword) {
-  console.log(`[ManyChat] Conectando a Browserless para keyword: ${keyword}`);
+  console.log(`[ManyChat] Conectando a Browserless para palabra: ${keyword}`);
 
-  // Conectar a Browserless en la nube via WebSocket
   const wsUrl = `${BROWSERLESS_URL}?token=${BROWSERLESS_TOKEN}`;
-
   let browser;
+
   try {
     browser = await chromium.connectOverCDP(wsUrl);
     console.log(`[ManyChat] Conectado a Browserless ✅`);
   } catch (e) {
-    console.error(`[ManyChat] Error conectando a Browserless:`, e.message);
     throw new Error(`Browserless no disponible: ${e.message}`);
   }
 
-  // Crear contexto con la sesión de ManyChat guardada
   const sessionExists = fs.existsSync(SESSION_FILE);
   const context = await browser.newContext({
     storageState: sessionExists ? SESSION_FILE : undefined,
@@ -79,103 +34,108 @@ async function createManyChatFlow(keyword) {
   const page = await context.newPage();
 
   try {
-    // Abrir ManyChat
-    console.log(`[ManyChat] Abriendo ManyChat...`);
-    await page.goto(`https://app.manychat.com/${ACCOUNT_ID}/cms?path=/&field=modified&order=desc`, {
+    // Paso 1: Cargar ManyChat para obtener cookies de sesión válidas
+    console.log(`[ManyChat] Iniciando sesión...`);
+    await page.goto(`https://app.manychat.com/${ACCOUNT_ID}/dashboard`, {
       waitUntil: 'domcontentloaded',
       timeout: 60000
     });
     await page.waitForTimeout(3000);
 
-    // Verificar sesión activa
-    if (page.url().includes('login') || page.url().includes('signin')) {
-      throw new Error('Sesión de ManyChat expirada — necesita renovarse');
+    if (page.url().includes('signin') || page.url().includes('login')) {
+      throw new Error('Sesión expirada — ejecuta /renovar_sesion');
     }
 
+    console.log(`[ManyChat] Dashboard abierto ✅`);
+
+    // Paso 2: Usar el API interno de ManyChat via fetch desde el contexto del browser
+    // (ya tiene las cookies de sesión cargadas)
+    const result = await page.evaluate(async ({ accountId, flowNs, keyword, phone }) => {
+      // Obtener el flujo actual
+      const getRes = await fetch(`/fb${accountId}/easyBuilder/get?flow_ns=${flowNs}`, {
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' }
+      });
+
+      if (!getRes.ok) return { error: `GET falló: ${getRes.status}` };
+      const flowData = await getRes.json();
+
+      if (!flowData || flowData.status === 'error') {
+        return { error: 'No se pudo obtener el flujo: ' + JSON.stringify(flowData).substring(0, 100) };
+      }
+
+      // Modificar la keyword en el trigger
+      const flow = flowData.data || flowData;
+      let modified = false;
+
+      // Buscar y cambiar keyword en triggers
+      const flowStr = JSON.stringify(flow);
+      const newFlowStr = flowStr.replace(
+        /"include_keywords":\s*\[[^\]]*\]/g,
+        `"include_keywords":["${keyword}"]`
+      );
+
+      // También cambiar la URL wa.me
+      const finalStr = newFlowStr.replace(
+        /https:\/\/wa\.me\/[^"]+/g,
+        `https://wa.me/${phone}?text=REEL_${keyword}`
+      );
+
+      if (flowStr === finalStr) {
+        return { error: 'No se encontraron patrones para cambiar', preview: flowStr.substring(0, 200) };
+      }
+
+      // Guardar el flujo modificado
+      const newFlow = JSON.parse(finalStr);
+      const saveRes = await fetch(`/fb${accountId}/easyBuilder/save`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ flow_ns: flowNs, data: newFlow })
+      });
+
+      if (!saveRes.ok) return { error: `SAVE falló: ${saveRes.status}` };
+      const saveData = await saveRes.json();
+
+      // Publicar
+      const publishRes = await fetch(`/fb${accountId}/easyBuilder/publish`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ flow_ns: flowNs })
+      });
+
+      const publishData = await publishRes.json();
+
+      return {
+        success: true,
+        saved: saveData.status,
+        published: publishData.status
+      };
+    }, { accountId: ACCOUNT_ID, flowNs: BASE_FLOW_NS, keyword, phone: GHL_PHONE });
+
+    console.log(`[ManyChat] Resultado API:`, result);
+
+    if (result.error) {
+      throw new Error(result.error);
+    }
+
+    // Screenshot como prueba
+    await page.goto(`https://app.manychat.com/${ACCOUNT_ID}/cms/easy-builder/${BASE_FLOW_NS}`, {
+      waitUntil: 'domcontentloaded',
+      timeout: 45000
+    }).catch(() => {}); // No bloquear si falla el screenshot
     await page.waitForTimeout(2000);
-    console.log(`[ManyChat] ManyChat abierto: ${page.url()}`);
+    const screenshot = await page.screenshot({ type: 'jpeg', quality: 60 }).catch(() => null);
 
-    // Cerrar banner de cookies GDPR (bloquea todos los clics si aparece)
-    await dismissCookieBanner(page);
-
-    // Borrar el flujo del reel anterior (siempre solo hay uno activo)
-    // await deleteLatestFlow(page); // Desactivado por ahora — activar si se quiere borrar el anterior
-
-    // Abrir el flujo base para modificarlo
-    const BASE_FLOW = 'content20260521152458_230387';
-    await page.goto(`https://app.manychat.com/${ACCOUNT_ID}/cms/easy-builder/${BASE_FLOW}`, {
-      waitUntil: 'domcontentloaded',
-      timeout: 60000
-    });
-    await page.waitForTimeout(3000);
-    await dismissCookieBanner(page); // Cerrar banner también aquí
-
-    // Clicar Editar
-    const editBtn = page.getByText('Editar').first();
-    if (await editBtn.isVisible({ timeout: 5000 }).catch(() => false)) {
-      await editBtn.click();
-      await page.waitForTimeout(2000);
-    }
-
-    // Cambiar keyword — usar type() para que React detecte los cambios
-    const kwInput = page.locator(`input[name*="include_keywords_input"]`).first();
-    const kwVisible = await kwInput.isVisible({ timeout: 8000 }).catch(() => false);
-
-    if (kwVisible) {
-      await kwInput.click({ clickCount: 3 }); // seleccionar todo
-      await page.keyboard.press('Control+A');
-      await page.keyboard.press('Backspace');
-      await kwInput.type(keyword, { delay: 50 }); // type carácter a carácter para React
-      await page.keyboard.press('Enter');
-      console.log(`[ManyChat] Keyword cambiada a: ${keyword}`);
-    } else {
-      // Fallback: buscar por placeholder
-      const inputs = await page.$$('input[placeholder*="Escribe una palabra"]');
-      if (inputs.length > 0) {
-        await inputs[0].click({ clickCount: 3 });
-        await page.keyboard.press('Control+A');
-        await page.keyboard.press('Backspace');
-        await page.keyboard.type(keyword, { delay: 50 });
-        await page.keyboard.press('Enter');
-        console.log(`[ManyChat] Keyword cambiada (fallback): ${keyword}`);
-      }
-    }
-
-    // Buscar y cambiar la URL del botón wa.me — también usar type() para React
-    const allInputs = await page.$$('input, textarea');
-    for (const inp of allInputs) {
-      const val = await inp.inputValue().catch(() => '');
-      if (val.includes('wa.me')) {
-        await inp.click({ clickCount: 3 });
-        await page.keyboard.press('Control+A');
-        await page.keyboard.press('Backspace');
-        await inp.type(`https://wa.me/${GHL_PHONE}?text=REEL_${keyword}`, { delay: 30 });
-        await page.keyboard.press('Enter');
-        console.log(`[ManyChat] URL actualizada: wa.me/?text=REEL_${keyword}`);
-        break;
-      }
-    }
-
-    // Guardar cambios (Actualizar)
-    const updateBtn = page.getByText('Actualizar').first();
-    if (await updateBtn.isVisible({ timeout: 5000 }).catch(() => false)) {
-      await updateBtn.click();
-      await page.waitForTimeout(2000);
-      console.log(`[ManyChat] Cambios guardados ✅`);
-    }
-
-    // Actualizar sesión guardada
     await context.storageState({ path: SESSION_FILE });
 
-    // Capturar screenshot como prueba
-    const screenshot = await page.screenshot({ type: 'jpeg', quality: 70 });
-
-    console.log(`[ManyChat] ✅ Flujo REEL_${keyword} listo`);
+    console.log(`[ManyChat] ✅ REEL_${keyword} listo`);
     return {
       success: true,
       keyword,
       url: `https://wa.me/${GHL_PHONE}?text=REEL_${keyword}`,
-      screenshot  // Buffer con la imagen
+      screenshot
     };
 
   } catch (err) {
@@ -189,50 +149,13 @@ async function createManyChatFlow(keyword) {
 
 async function dismissCookieBanner(page) {
   try {
-    // Esperar si el banner está cargando
-    await page.waitForTimeout(1000);
-
-    // Intentar cerrar el banner de Usercentrics
-    const dismissed = await page.evaluate(() => {
-      // Método 1: eliminar el elemento del DOM directamente
-      const banner = document.getElementById('usercentrics-cmp-ui');
-      if (banner) {
-        banner.remove();
-        return 'removed banner';
-      }
-
-      // Método 2: buscar botón de aceptar
-      const acceptBtns = Array.from(document.querySelectorAll('button')).filter(b =>
-        b.textContent?.toLowerCase().includes('accept') ||
-        b.textContent?.toLowerCase().includes('aceptar') ||
-        b.textContent?.toLowerCase().includes('agree') ||
-        b.textContent?.toLowerCase().includes('rechazar') ||
-        b.textContent?.toLowerCase().includes('reject')
-      );
-      if (acceptBtns.length > 0) {
-        acceptBtns[0].click();
-        return 'clicked accept button';
-      }
-
-      return 'no banner found';
-    });
-
-    console.log(`[ManyChat] Cookie banner: ${dismissed}`);
-
-    // También eliminar via shadow DOM si existe
     await page.evaluate(() => {
-      const aside = document.querySelector('aside[id*="usercentrics"]');
-      if (aside) aside.style.display = 'none';
-
-      // Restaurar el scroll y pointer events del body
+      const banner = document.getElementById('usercentrics-cmp-ui');
+      if (banner) banner.remove();
       document.body.style.pointerEvents = 'auto';
       document.body.style.overflow = 'auto';
     });
-
-    await page.waitForTimeout(500);
-  } catch (e) {
-    console.log('[ManyChat] Cookie banner check skipped:', e.message);
-  }
+  } catch (e) {}
 }
 
 module.exports = { createManyChatFlow };
